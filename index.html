@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebAuthn Test GUI</title>
+
+</head>
+<body>
+<h1>WebAuthn Demo</h1>
+<div id="register">
+    <h2>Register</h2>
+    <input type="text" id="username" placeholder="Enter username">
+    <input type="text" id="nickname" placeholder="Enter Nickname">
+    <button id="registerBtn">Register</button>
+</div>
+<div id="login">
+    <h2>Login</h2>
+    <input type="text" id="loginUsername" placeholder="Enter username">
+    <button id="loginBtn">Login</button>
+</div>
+<script>
+    function urlSafeBase64ToStandard(base64) {
+        // 替换回标准 Base64 的字符
+        let standardBase64 = base64.replace(/-/g, "+").replace(/_/g, "/");
+        // 补充末尾的 '=' 使长度是 4 的倍数
+        while (standardBase64.length % 4 !== 0) {
+            standardBase64 += "=";
+        }
+        return standardBase64;
+    }
+    function bufferDecode(value) {
+        return Uint8Array.from(atob(urlSafeBase64ToStandard(value)), c => c.charCodeAt(0));
+    }
+    function bufferEncode(value) {
+        return btoa(String.fromCharCode(...new Uint8Array(value)))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=/g, "");
+    }
+    // 注册按钮点击事件
+    document.getElementById('registerBtn').addEventListener('click', async () => {
+        const username = document.getElementById('username').value;
+        const nickname = document.getElementById('nickname').value;
+
+        fetch('/register/begin', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, nickname })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success === true) {
+                    return data.data;
+                } else {
+                    throw new Error(data.error);
+                }
+            })
+            .then(data => {
+                data.publicKey.challenge = bufferDecode(data.publicKey.challenge);
+                data.publicKey.user.id = bufferDecode(data.publicKey.user.id);
+                return navigator.credentials.create({ publicKey: data.publicKey });
+            })
+            .then(credential => {
+                console.log('Registration successful:', credential);
+                window.credential = credential
+                return fetch('/register/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        id: credential.id,
+                        rawId: bufferEncode(credential.rawId),
+                        type: credential.type,
+                        response: {
+                            attestationObject: bufferEncode(credential.response.attestationObject),
+                            clientDataJSON: bufferEncode(credential.response.clientDataJSON)
+                        }
+                    })
+                });
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success === true) {
+                    console.log('success register');
+                } else {
+                    throw new Error(data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Registration failed:', error);
+            });
+
+    });
+
+    // 登录按钮点击事件
+    document.getElementById('loginBtn').addEventListener('click', async () => {
+        const loginUsername = document.getElementById('loginUsername').value;
+        fetch('/login/begin', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username: loginUsername })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success === true) {
+                    return data.data;
+                } else {
+                    throw new Error(data.error);
+                }
+            })
+            .then(data => {
+                data.publicKey.challenge = bufferDecode(data.publicKey.challenge);
+                data.publicKey.allowCredentials.forEach(function (listItem) {
+                    listItem.id = bufferDecode(listItem.id)
+                });
+                return navigator.credentials.get({ publicKey: data.publicKey });
+            })
+            .then(assertion => {
+                console.log('assertion successful:', assertion);
+                const authData = assertion.response.authenticatorData;
+                const clientDataJSON = assertion.response.clientDataJSON;
+                const rawId = assertion.rawId;
+                const sig = assertion.response.signature;
+                const userHandle = assertion.response.userHandle;
+                return fetch('/login/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        id: assertion.id,
+                        rawId: bufferEncode(rawId),
+                        type: assertion.type,
+                        response: {
+                            authenticatorData: bufferEncode(authData),
+                            clientDataJSON: bufferEncode(clientDataJSON),
+                            signature: bufferEncode(sig),
+                            userHandle: bufferEncode(userHandle),
+                        },
+                    })
+                });
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success === true) {
+                    console.log('success login');
+                } else {
+                    throw new Error(data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Login failed:', error);
+            });
+    });
+</script>
+</body>
+</html>
