@@ -17,6 +17,7 @@ const (
 	RegUserTempDataKey   = "temp_user"
 	LoginSessionDataKey  = "login_data"
 	LoginUserTempDataKey = "temp_user"
+	UserKey              = "user"
 )
 
 // https://webauthn.guide/#webauthn-api
@@ -28,6 +29,32 @@ type BeginRegisterReq struct {
 
 type BeginLoginReq struct {
 	Username string `json:"username" binding:"required"`
+}
+
+func Logout(c *gin.Context) {
+	session := sessions.Default(c)
+	session.Delete(UserKey)
+	if err := session.Save(); err != nil {
+		fmt.Println("[handler][Logout] session.Save error", err)
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true})
+}
+
+func GetCurrentUser(c *gin.Context) {
+	session := sessions.Default(c)
+	user, ok := session.Get(UserKey).([]byte)
+	if !ok {
+		c.JSON(401, gin.H{"error": "user not found"})
+		return
+	}
+	var u models.User
+	if err := json.Unmarshal(user, &u); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true, "data": u})
 }
 
 func BeginRegister(c *gin.Context) {
@@ -180,12 +207,15 @@ func BeginLogin(c *gin.Context) {
 
 func FinishLogin(c *gin.Context) {
 	var (
-		sessionData = webauthn.SessionData{}
-		user        = models.User{}
-		err         error
+		sessionData    = webauthn.SessionData{}
+		user           = models.User{}
+		err            error
+		userStr        []byte
+		sessionDataStr []byte
+		ok             bool
 	)
 	session := sessions.Default(c)
-	if sessionDataStr, ok := session.Get(LoginSessionDataKey).([]byte); !ok {
+	if sessionDataStr, ok = session.Get(LoginSessionDataKey).([]byte); !ok {
 		c.JSON(400, gin.H{"error": "login_data not found"})
 		return
 	} else {
@@ -195,7 +225,7 @@ func FinishLogin(c *gin.Context) {
 			return
 		}
 	}
-	if userStr, ok := session.Get(LoginUserTempDataKey).([]byte); !ok {
+	if userStr, ok = session.Get(LoginUserTempDataKey).([]byte); !ok {
 		c.JSON(400, gin.H{"error": "temp_user not found"})
 		return
 	} else {
@@ -213,6 +243,7 @@ func FinishLogin(c *gin.Context) {
 	}
 	session.Delete(LoginSessionDataKey)
 	session.Delete(LoginUserTempDataKey)
+	session.Set(UserKey, userStr)
 	if err = session.Save(); err != nil {
 		fmt.Println("[handler][FinishLogin] session.Save error", err)
 		c.JSON(500, gin.H{"error": err.Error()})

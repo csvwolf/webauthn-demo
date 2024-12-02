@@ -22,6 +22,8 @@ func main() {
 		c.HTML(200, "index.html", nil)
 	})
 	r.GET("/ping", handler.Ping)
+	r.GET("/user", handler.GetCurrentUser)
+	r.POST("logout", handler.Logout)
 	r.POST("/register/begin", handler.BeginRegister)
 	r.POST("/register/finish", handler.FinishRegister)
 	r.POST("/login/begin", handler.BeginLogin)
