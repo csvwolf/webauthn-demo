@@ -1,18 +1,21 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebAuthn Test GUI</title>
     <style>
-        /* 添加一些样式来美化页面 */
         body {
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
+            background-color: #f9f9f9;
         }
         h1 {
             text-align: center;
             margin-top: 50px;
+            color: #333;
         }
         #tabs {
             display: flex;
@@ -24,7 +27,11 @@
             cursor: pointer;
             border: 1px solid #ccc;
             border-radius: 5px 5px 0 0;
-            background-color: #f0f0f0;
+            background-color: #e0e0e0;
+            transition: background-color 0.3s ease;
+        }
+        .tab:hover {
+            background-color: #d0d0d0;
         }
         .tab.active {
             background-color: #fff;
@@ -34,26 +41,29 @@
             border: 1px solid #ccc;
             padding: 20px;
             border-radius: 0 5px 5px 5px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            margin-top: -1px;
         }
         input[type="text"], button {
             display: block;
             width: 100%;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
             padding: 10px;
             border: 1px solid #ccc;
             border-radius: 3px;
-            line-height: 24px;
             box-sizing: border-box;
         }
         button {
             background-color: #007BFF;
             color: #fff;
             cursor: pointer;
+            transition: background-color 0.3s ease;
+            border: none;
         }
         button:hover {
             background-color: #0056b3;
         }
-        /* 自定义 message 组件样式 */
         .message {
             position: fixed;
             top: 20px;
@@ -65,6 +75,12 @@
             color: #fff;
             font-weight: bold;
             z-index: 9999;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        .message.show {
+            opacity: 1;
         }
         .message.success {
             background-color: #4CAF50;
@@ -72,19 +88,24 @@
         .message.error {
             background-color: #f44336;
         }
-
         .container {
-            max-width: 800px;
+            max-width: 600px;
             margin: 0 auto;
+            padding: 20px;
+        }
+        #user-info {
+            text-align: center;
+            margin-top: 20px;
         }
     </style>
 </head>
 <body>
-<div class="container">
+<div class="container" id="auth-container">
     <h1>WebAuthn Demo</h1>
     <div id="tabs">
         <div class="tab active" id="register-tab">Register</div>
         <div class="tab" id="login-tab">Login</div>
+        <div class="tab" id="user-tab" style="display: none;">User Info</div>
     </div>
     <div id="register-content" class="tab-content">
         <h2>Register</h2>
@@ -97,32 +118,69 @@
         <input type="text" id="loginUsername" placeholder="Enter username">
         <button id="loginBtn">Login</button>
     </div>
+    <div id="user-content" class="tab-content" style="display: none;">
+        <h2>Welcome Back!</h2>
+        <p><strong>Username:</strong> <span id="user-username"></span></p>
+        <p><strong>Display Name:</strong> <span id="user-display-name"></span></p>
+        <p><strong>Register Date:</strong> <span id="user-register-date"></span></p>
+        <button id="logoutBtn">Logout</button>
+    </div>
 </div>
-<!-- 自定义 message 组件 -->
-<div id="message" class="message" style="display: none;"></div>
+<div id="message" class="message"></div>
 <script>
-    // 辅助函数：将 URL 安全的 Base64 转换为标准 Base64
+    async function checkUserStatus() {
+        try {
+            const response = await fetch('/user', {
+                method: 'GET'
+            });
+
+            if (response.status === 401) {
+                document.getElementById('auth-container').style.display = 'block';
+                document.getElementById('user-tab').style.display = 'none';
+            } else if (response.ok) {
+                const userData = await response.json();
+                document.getElementById('user-username').textContent = userData.data.username;
+                document.getElementById('user-display-name').textContent = userData.data.display_name;
+                document.getElementById('user-register-date').textContent = new Date(userData.data.registered_at).toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                document.getElementById('auth-container').style.display = 'block';
+                document.getElementById('register-content').style.display = 'none';
+                document.getElementById('login-content').style.display = 'none';
+                document.getElementById('user-content').style.display = 'block';
+                document.getElementById('user-tab').style.display = 'block';
+                document.getElementById('login-tab').style.display = 'none';
+                document.getElementById('register-tab').style.display = 'none';
+
+                document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+                document.getElementById('user-tab').classList.add('active');
+            } else {
+                throw new Error('Unexpected response status');
+            }
+        } catch (error) {
+            console.error('Failed to check user status:', error);
+        }
+    }
+
     function urlSafeBase64ToStandard(base64) {
         return base64.replace(/-/g, '+').replace(/_/g, '/').replace(/=/g, '');
     }
 
-    // 辅助函数：将标准 Base64 转换为 Uint8Array
     function bufferDecode(value) {
         return Uint8Array.from(atob(urlSafeBase64ToStandard(value)), c => c.charCodeAt(0));
     }
 
-    // 辅助函数：将 Uint8Array 转换为 URL 安全的 Base64
     function bufferEncode(value) {
         return btoa(String.fromCharCode(...new Uint8Array(value)))
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=/g, '');
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
-    // 注册按钮点击事件
     document.getElementById('registerBtn').addEventListener('click', async () => {
-        const username = document.getElementById('username').value;
-        const nickname = document.getElementById('nickname').value;
+        const username = document.getElementById('username').value.trim();
+        const nickname = document.getElementById('nickname').value.trim();
+
+        if (!username || !nickname) {
+            showMessage('Please fill in all fields.', 'error');
+            return;
+        }
 
         try {
             const response = await fetch('/register/begin', {
@@ -166,17 +224,20 @@
                 throw new Error(registrationResult.error);
             }
 
-            console.log('success register');
-            showMessage('Registration successful!', 'success'); // 显示注册成功消息
+            showMessage('Registration successful!', 'success');
         } catch (error) {
             console.error('Registration failed:', error);
-            showMessage('Registration failed. Please try again.', 'error'); // 显示注册失败消息
+            showMessage('Registration failed. Please try again.', 'error');
         }
     });
 
-    // 登录按钮点击事件
     document.getElementById('loginBtn').addEventListener('click', async () => {
-        const loginUsername = document.getElementById('loginUsername').value;
+        const loginUsername = document.getElementById('loginUsername').value.trim();
+
+        if (!loginUsername) {
+            showMessage('Please enter a username.', 'error');
+            return;
+        }
 
         try {
             const response = await fetch('/login/begin', {
@@ -199,13 +260,7 @@
             });
 
             const assertion = await navigator.credentials.get({ publicKey });
-            console.log('assertion successful:', assertion);
-
-            const authData = assertion.response.authenticatorData;
-            const clientDataJSON = assertion.response.clientDataJSON;
-            const rawId = assertion.rawId;
-            const sig = assertion.response.signature;
-            const userHandle = assertion.response.userHandle;
+            console.log('Assertion successful:', assertion);
 
             const loginResponse = await fetch('/login/finish', {
                 method: 'POST',
@@ -214,13 +269,13 @@
                 },
                 body: JSON.stringify({
                     id: assertion.id,
-                    rawId: bufferEncode(rawId),
+                    rawId: bufferEncode(assertion.rawId),
                     type: assertion.type,
                     response: {
-                        authenticatorData: bufferEncode(authData),
-                        clientDataJSON: bufferEncode(clientDataJSON),
-                        signature: bufferEncode(sig),
-                        userHandle: bufferEncode(userHandle),
+                        authenticatorData: bufferEncode(assertion.response.authenticatorData),
+                        clientDataJSON: bufferEncode(assertion.response.clientDataJSON),
+                        signature: bufferEncode(assertion.response.signature),
+                        userHandle: bufferEncode(assertion.response.userHandle),
                     },
                 })
             });
@@ -230,39 +285,76 @@
                 throw new Error(loginResult.error);
             }
 
-            console.log('success login');
-            showMessage(`Welcome ${loginResult.data.display_name}`, 'success'); // 显示登录成功消息
+            document.getElementById('user-username').textContent = loginResult.data.username;
+            document.getElementById('user-display-name').textContent = loginResult.data.display_name;
+            document.getElementById('user-register-date').textContent = new Date(loginResult.data.registered_at).toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            document.getElementById('auth-container').style.display = 'block';
+            document.getElementById('register-content').style.display = 'none';
+            document.getElementById('login-content').style.display = 'none';
+            document.getElementById('user-content').style.display = 'block';
+            document.getElementById('user-tab').style.display = 'block';
+            document.getElementById('login-tab').style.display = 'none';
+            document.getElementById('register-tab').style.display = 'none';
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.getElementById('user-tab').classList.add('active');
+
+            showMessage(`Welcome ${loginResult.data.display_name}`, 'success');
         } catch (error) {
             console.error('Login failed:', error);
-            showMessage('Login failed. Please try again.', 'error'); // 显示登录失败消息
+            showMessage('Login failed. Please try again.', 'error');
+        }
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+        try {
+            const response = await fetch('/logout', {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                throw new Error('Logout failed');
+            }
+
+            document.getElementById('auth-container').style.display = 'block';
+            document.getElementById('register-content').style.display = 'block';
+            document.getElementById('login-content').style.display = 'none';
+            document.getElementById('user-content').style.display = 'none';
+            document.getElementById('user-tab').style.display = 'none';
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.getElementById('register-tab').classList.add('active');
+            document.getElementById('login-tab').style.display = 'block';
+            document.getElementById('register-tab').style.display = 'block';
+            showMessage('Logged out successfully', 'success');
+        } catch (error) {
+            console.error('Logout failed:', error);
+            showMessage('Logout failed. Please try again.', 'error');
         }
     });
 
     function showMessage(message, type) {
         const messageElement = document.getElementById('message');
         messageElement.textContent = message;
-        messageElement.classList.remove('success', 'error');
-        messageElement.classList.add(type);
-        messageElement.style.display = 'block';
+        messageElement.className = `message ${type} show`;
 
         setTimeout(() => {
-            messageElement.style.display = 'none';
+            messageElement.classList.remove('show');
         }, 3000);
     }
 
-    // 选项卡切换事件
     document.getElementById('tabs').addEventListener('click', function (e) {
-        const target = e.target;
-        if (target.classList.contains('tab')) {
+        if (e.target.classList.contains('tab')) {
+            const target = e.target;
             const tabId = target.id;
             const contentId = tabId.replace('-tab', '-content');
-            const tabs = document.querySelectorAll('.tab');
-            const contents = document.querySelectorAll('.tab-content');
-            tabs.forEach(tab => tab.classList.remove('active'));
-            contents.forEach(content => content.style.display = 'none');
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.style.display = 'none');
             target.classList.add('active');
             document.getElementById(contentId).style.display = 'block';
         }
     });
+
+    // Check user status on page load
+    window.addEventListener('load', checkUserStatus);
 </script>
 </body>
+</html>
